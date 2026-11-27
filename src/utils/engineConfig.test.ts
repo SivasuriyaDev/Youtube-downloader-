@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DEFAULT_ANDROID_ENGINE_URL,
+  getDefaultEngineMode,
+  parseStoredEngineSettings,
   resolveApiBaseUrl,
   validateEngineBaseUrl,
 } from './engineConfig';
@@ -15,6 +17,7 @@ test('validates custom engine base URLs safely', () => {
 
 test('resolves API base URL per execution mode', () => {
   assert.equal(resolveApiBaseUrl({ mode: 'cloud', customUrl: '' }), '');
+  assert.equal(resolveApiBaseUrl({ mode: 'android_inbuilt', customUrl: '' }), '');
   assert.equal(
     resolveApiBaseUrl({ mode: 'android_local', customUrl: '' }),
     DEFAULT_ANDROID_ENGINE_URL
@@ -27,5 +30,17 @@ test('resolves API base URL per execution mode', () => {
   assert.equal(
     resolveApiBaseUrl({ mode: 'cloud', customUrl: '' }, 'https://velosave.example.com/'),
     'https://velosave.example.com'
+  );
+});
+
+test('auto-selects inbuilt engine on native Android APK and cloud on web', () => {
+  assert.equal(getDefaultEngineMode(true), 'android_inbuilt');
+  assert.equal(getDefaultEngineMode(false), 'cloud');
+  assert.deepEqual(parseStoredEngineSettings(null, true), { mode: 'android_inbuilt', customUrl: '' });
+  assert.deepEqual(parseStoredEngineSettings(null, false), { mode: 'cloud', customUrl: '' });
+  // Never stay stuck in android_inbuilt inside a regular web browser
+  assert.deepEqual(
+    parseStoredEngineSettings(JSON.stringify({ mode: 'android_inbuilt', customUrl: '' }), false),
+    { mode: 'cloud', customUrl: '' }
   );
 });

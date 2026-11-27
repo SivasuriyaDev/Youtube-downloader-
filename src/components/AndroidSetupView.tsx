@@ -21,14 +21,18 @@ import {
   type ExecutionEngineMode,
 } from '../utils/engineConfig';
 
+import { checkNativeAndroidHealth } from '../utils/nativeAndroidEngine';
+
 interface AndroidSetupViewProps {
   engineSettings: EngineSettings;
+  isNativeAndroid: boolean;
   onUpdateEngineSettings: (next: EngineSettings) => void;
   onTestShareLink: (url: string) => void;
 }
 
 export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
   engineSettings,
+  isNativeAndroid,
   onUpdateEngineSettings,
   onTestShareLink,
 }) => {
@@ -36,6 +40,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
   const isOnline = useOnlineStatus();
   const [copiedCmd, setCopiedCmd] = useState(false);
   const [pingStatus, setPingStatus] = useState<'idle' | 'checking' | 'connected' | 'offline'>('idle');
+  const [pingDetail, setPingDetail] = useState<string | null>(null);
   const [customUrlError, setCustomUrlError] = useState<string | null>(null);
 
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -52,6 +57,26 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
   };
 
   const handleTestEngine = async () => {
+    setPingDetail(null);
+    if (engineSettings.mode === 'android_inbuilt') {
+      if (!isNativeAndroid) {
+        setPingStatus('offline');
+        setPingDetail('Available inside the VeloSave Android APK.');
+        return;
+      }
+      setPingStatus('checking');
+      try {
+        const res = await checkNativeAndroidHealth();
+        setPingStatus(res.ok ? 'connected' : 'offline');
+        if (res.ok) {
+          setPingDetail(`yt-dlp (${res.ytdlpVersion}) + FFmpeg ready`);
+        }
+      } catch {
+        setPingStatus('offline');
+      }
+      return;
+    }
+
     if (engineSettings.mode === 'custom' && !validateEngineBaseUrl(engineSettings.customUrl)) {
       setCustomUrlError('Enter a valid http:// or https:// server URL.');
       return;
@@ -69,6 +94,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
 
   const handleModeSelect = (mode: ExecutionEngineMode) => {
     setPingStatus('idle');
+    setPingDetail(null);
     setCustomUrlError(null);
     onUpdateEngineSettings({ ...engineSettings, mode });
   };
@@ -83,7 +109,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
           Android Execution Engine &amp; App Setup
         </h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-          Run extraction directly on your Android phone&apos;s IP via Termux so YouTube videos, playlists, Instagram Reels, and Spotify playlist tracks download without datacenter blocks.
+          VeloSave APK bundles yt-dlp and FFmpeg directly on your phone to save YouTube videos, playlists, Instagram Reels, and Spotify tracks into Downloads/VeloSave without external apps.
         </p>
       </div>
 
@@ -99,7 +125,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
                 Execution Mode
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Choose where VeloSave inspects links and downloads video streams.
+                {pingDetail || 'Choose where VeloSave inspects links and processes MP4/MP3 downloads.'}
               </p>
             </div>
           </div>
@@ -114,15 +140,38 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
               {pingStatus === 'checking'
                 ? 'Checking...'
                 : pingStatus === 'connected'
-                ? 'Engine Connected'
+                ? 'Engine Ready'
                 : pingStatus === 'offline'
                 ? 'Not Running — Retry'
-                : 'Test Connection'}
+                : 'Test Engine'}
             </span>
           </button>
         </div>
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
+        <div className={`mt-4 grid gap-3 ${isNativeAndroid ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+          {isNativeAndroid && (
+            <button
+              type="button"
+              onClick={() => handleModeSelect('android_inbuilt')}
+              aria-pressed={engineSettings.mode === 'android_inbuilt'}
+              className={`flex flex-col items-start rounded-xl border p-4 text-left transition-colors ${
+                engineSettings.mode === 'android_inbuilt'
+                  ? 'border-blue-600 bg-blue-50/70 dark:border-blue-500 dark:bg-blue-950/35'
+                  : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
+              }`}
+            >
+              <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                Inbuilt yt-dlp + FFmpeg
+              </span>
+              <span className="mt-1 font-mono text-xs text-blue-600 dark:text-blue-400">
+                On-Device APK Engine
+              </span>
+              <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+                Bundled inside the APK. Zero Termux needed; saves to Downloads/VeloSave.
+              </span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => handleModeSelect('cloud')}
@@ -137,7 +186,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
               Cloud Server
             </span>
             <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              Built-in server yt-dlp engine. Ideal when hosted with cookies or proxy.
+              Remote yt-dlp server engine. Best for desktop or browser PWA usage.
             </span>
           </button>
 
@@ -152,13 +201,13 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
             }`}
           >
             <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              Android Local Engine
+              Termux Local Bridge
             </span>
             <span className="mt-1 font-mono text-xs text-blue-600 dark:text-blue-400">
               {DEFAULT_ANDROID_ENGINE_URL}
             </span>
             <span className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-              Runs directly on your Android phone via Termux for all YouTube &amp; Instagram videos.
+              Optional Chrome/PWA bridge running on your phone via Termux.
             </span>
           </button>
 
@@ -203,49 +252,51 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
           </div>
         )}
 
-        {/* Termux On-Device Setup */}
-        <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-800">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-            <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-            <span>Start On-Device Engine in Termux (Android)</span>
+        {/* Termux On-Device Setup (optional for Chrome/PWA users; APK has yt-dlp + FFmpeg inbuilt) */}
+        {!isNativeAndroid && (
+          <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-800">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+              <Terminal className="h-4 w-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+              <span>Optional Termux Bridge (Chrome / PWA only)</span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+              Note: The VeloSave Android APK already bundles yt-dlp + FFmpeg internally and works with zero Termux setup. Only run this command if using VeloSave inside mobile Chrome without the APK:
+            </p>
+
+            <pre className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-slate-950 p-3.5 font-mono text-xs text-slate-100 dark:border-slate-800">
+              <code>{termuxCommand}</code>
+            </pre>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={handleCopyCommand}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700"
+              >
+                {copiedCmd ? (
+                  <>
+                    <Check className="h-4 w-4" aria-hidden="true" />
+                    <span>Command Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                    <span>Copy Termux Command</span>
+                  </>
+                )}
+              </button>
+
+              <a
+                href="/api/android-script"
+                download="velosave-termux-setup.sh"
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              >
+                <Download className="h-4 w-4" aria-hidden="true" />
+                <span>Download Setup Script</span>
+              </a>
+            </div>
           </div>
-          <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-            Install Termux on Android, run this single command once, then select Android Local Engine above. All YouTube 4K/1080p/MP3 and Instagram Reels will download directly through your mobile IP.
-          </p>
-
-          <pre className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-slate-950 p-3.5 font-mono text-xs text-slate-100 dark:border-slate-800">
-            <code>{termuxCommand}</code>
-          </pre>
-
-          <div className="mt-3 flex flex-wrap items-center gap-2.5">
-            <button
-              type="button"
-              onClick={handleCopyCommand}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-blue-600 px-4 text-xs font-semibold text-white hover:bg-blue-700"
-            >
-              {copiedCmd ? (
-                <>
-                  <Check className="h-4 w-4" aria-hidden="true" />
-                  <span>Command Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-4 w-4" aria-hidden="true" />
-                  <span>Copy Termux Command</span>
-                </>
-              )}
-            </button>
-
-            <a
-              href="/api/android-script"
-              download="velosave-termux-setup.sh"
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-            >
-              <Download className="h-4 w-4" aria-hidden="true" />
-              <span>Download Setup Script</span>
-            </a>
-          </div>
-        </div>
+        )}
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">

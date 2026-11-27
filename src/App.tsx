@@ -22,6 +22,14 @@ import {
   type ExecutionEngineMode,
 } from './utils/engineConfig';
 import { extractSharedUrl, parseMediaUrl, sanitizeFilename } from './utils/mediaParser';
+import {
+  cancelNativeAndroidDownload,
+  consumeNativeSharedUrl,
+  downloadViaNativeAndroid,
+  inspectViaNativeAndroid,
+  isNativeAndroidRuntime,
+  subscribeNativeSharedUrls,
+} from './utils/nativeAndroidEngine';
 import type {
   ActiveTab,
   DownloadTask,
@@ -45,6 +53,7 @@ export default function App() {
 
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const apiBaseUrl = resolveApiBaseUrl(engineSettings);
+  const nativeAndroid = isNativeAndroidRuntime();
 
   const handleUpdateEngineSettings = useCallback((next: EngineSettings) => {
     setEngineSettings(next);
@@ -83,6 +92,29 @@ export default function App() {
         return;
       }
 
+      if (engineSettings.mode === 'android_inbuilt') {
+        if (!nativeAndroid) {
+          setInspectError('Inbuilt Engine runs inside the Android APK. Switch to Cloud Engine or Android Local on browser.');
+          setInspectErrorCode('ENGINE_OFFLINE');
+          setInspectedMedia(null);
+          setIsInspecting(false);
+          return;
+        }
+        try {
+          const data = await inspectViaNativeAndroid(parsed.canonicalUrl);
+          setInspectedMedia(data);
+        } catch (err) {
+          const message =
+            err instanceof Error ? err.message : 'Could not inspect this link via inbuilt engine.';
+          setInspectError(message);
+          setInspectErrorCode(null);
+          setInspectedMedia(null);
+        } finally {
+          setIsInspecting(false);
+        }
+        return;
+      }
+
       if (engineSettings.mode === 'custom' && !apiBaseUrl) {
         setInspectError('Enter a valid Custom Engine URL in Android Setup before fetching.');
         setInspectErrorCode('ENGINE_OFFLINE');
@@ -117,7 +149,7 @@ export default function App() {
         setIsInspecting(false);
       }
     },
-    [apiBaseUrl, engineSettings.mode, urlInput]
+    [apiBaseUrl, engineSettings.mode, nativeAndroid, urlInput]
   );
 
   useEffect(() => {
@@ -127,7 +159,29 @@ export default function App() {
       window.history.replaceState({}, '', window.location.pathname);
       void handleInspect(shared);
     }
-  }, [handleInspect]);
+
+    let cleanupNativeSub: (() => void) | null = null;
+    if (nativeAndroid) {
+      void consumeNativeSharedUrl().then((nativeShared) => {
+        if (nativeShared) {
+          setUrlInput(nativeShared);
+          setActiveTab('downloader');
+          void handleInspect(nativeShared);
+        }
+      });
+      void subscribeNativeSharedUrls((incomingUrl) => {
+        setUrlInput(incomingUrl);
+        setActiveTab('downloader');
+        void handleInspect(incomingUrl);
+      }).then((fn) => {
+        cleanupNativeSub = fn;
+      });
+    }
+
+    return () => {
+      if (cleanupNativeSub) cleanupNativeSub();
+    };
+  }, [handleInspect, nativeAndroid]);
 
   const executeTask = useCallback(
     async (task: DownloadTask, contentType: InspectedMedia['contentType'], durationSeconds: number) => {
@@ -145,21 +199,66 @@ export default function App() {
       );
 
       try {
-        const finalBytes = await streamAndSaveFile(
-          endpoint,
-          filename,
-          task.format.sizeBytes,
-          controller.signal,
-          (loadedBytes, totalBytes, progress) => {
-            setTasks((prev) =>
-              prev.map((t) =>
-                t.taskId === task.taskId
-                  ? { ...t, loadedBytes, totalBytes, progress }
-                  : t
-              )
+        let finalBytes = 0;
+
+        if (engineSettings.mode === 'android_inbuilt' && nativeAndroid) {
+          const isBundledLocalAsset = Boolean(task.format.directUrl?.startsWith('/'));
+          if (isBundledLocalAsset && task.format.directUrl) {
+            finalBytes = await streamAndSaveFile(
+              task.format.directUrl,
+              filename,
+              task.format.sizeBytes,
+              controller.signal,
+              (loadedBytes, totalBytes, progress) => {
+                setTasks((prev) =>
+                  prev.map((t) =>
+                    t.taskId === task.taskId
+                      ? { ...t, loadedBytes, totalBytes, progress }
+                      : t
+                  )
+                );
+              }
             );
+          } else {
+            const nativeResult = await downloadViaNativeAndroid(
+              {
+                taskId: task.taskId,
+                url: task.canonicalUrl,
+                query: task.searchQuery || task.format.searchQuery,
+                directUrl: task.format.directUrl,
+                itag: String(task.format.itag || 'bestvideo+bestaudio/best'),
+                ext: task.format.container,
+                filename,
+              },
+              (loadedBytes, totalBytes, progress) => {
+                setTasks((prev) =>
+                  prev.map((t) =>
+                    t.taskId === task.taskId
+                      ? { ...t, loadedBytes, totalBytes, progress }
+                      : t
+                  )
+                );
+              }
+            );
+            finalBytes = nativeResult.sizeBytes;
           }
-        );
+        } else {
+          finalBytes = await streamAndSaveFile(
+            endpoint,
+            filename,
+            task.format.sizeBytes,
+            controller.signal,
+            (loadedBytes, totalBytes, progress) => {
+              setTasks((prev) =>
+                prev.map((t) =>
+                  t.taskId === task.taskId
+                    ? { ...t, loadedBytes, totalBytes, progress }
+                    : t
+                )
+              );
+            }
+          );
+        }
 
         setTasks((prev) =>
           prev.map((t) =>
@@ -212,7 +311,14 @@ export default function App() {
           return next;
         });
       } catch (err) {
-        const isAbort = err instanceof DOMException && err.name === 'AbortError';
+        const errCode =
+          err && typeof err === 'object' && 'code' in err
+            ? String((err as { code?: unknown }).code)
+            : '';
+        const isAbort =
+          (err instanceof DOMException && err.name === 'AbortError') ||
+          errCode === 'CANCELLED' ||
+          (err instanceof Error && err.message === 'Cancelled');
         const errorMessage = err instanceof Error ? err.message : 'Download interrupted.';
         setTasks((prev) =>
           prev.map((t) =>
@@ -229,7 +335,7 @@ export default function App() {
         abortControllersRef.current.delete(task.taskId);
       }
     },
-    [apiBaseUrl]
+    [apiBaseUrl, engineSettings.mode, nativeAndroid]
   );
 
   const handleStartDownload = (media: InspectedMedia, format: MediaFormat) => {
@@ -321,6 +427,9 @@ export default function App() {
     const controller = abortControllersRef.current.get(taskId);
     if (controller) {
       controller.abort();
+    }
+    if (engineSettings.mode === 'android_inbuilt' && nativeAndroid) {
+      void cancelNativeAndroidDownload(taskId);
     }
   };
 
@@ -442,6 +551,7 @@ export default function App() {
             onStartPlaylistDownload={handleStartPlaylistDownload}
             recentLibrary={libraryItems}
             engineMode={engineSettings.mode}
+            isNativeAndroid={nativeAndroid}
             onEngineModeChange={handleEngineModeChange}
             onOpenLibrary={() => setActiveTab('library')}
             onOpenAndroid={() => setActiveTab('android')}
@@ -472,6 +582,7 @@ export default function App() {
         {activeTab === 'android' && (
           <AndroidSetupView
             engineSettings={engineSettings}
+            isNativeAndroid={nativeAndroid}
             onUpdateEngineSettings={handleUpdateEngineSettings}
             onTestShareLink={handleTestShareLink}
           />

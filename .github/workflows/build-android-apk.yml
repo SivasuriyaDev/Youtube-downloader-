@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       api_base_url:
-        description: 'Optional default Cloud API base URL baked into the APK (leave empty to use Android Local Engine)'
+        description: 'Optional default Cloud API base URL baked into the APK (leave empty to use inbuilt yt-dlp + FFmpeg engine)'
         required: false
         default: ''
 
@@ -68,7 +68,7 @@ jobs:
         env:
           APK_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('1.0.{0}', github.run_number) }}
         run: |
-          npm install --no-save --legacy-peer-deps --no-audit --no-fund @capacitor/core@^8.6.0 @capacitor/cli@^8.6.0 @capacitor/android@^8.6.0
+          npm install --no-save --legacy-peer-deps --no-audit --no-fund @capacitor/cli@^8.6.0 @capacitor/android@^8.6.0
           if [ ! -d "android" ]; then
             npx cap add android
           fi

@@ -1,4 +1,4 @@
-export type ExecutionEngineMode = 'cloud' | 'android_local' | 'custom';
+export type ExecutionEngineMode = 'android_inbuilt' | 'cloud' | 'android_local' | 'custom';
 
 export interface EngineSettings {
   mode: ExecutionEngineMode;
@@ -6,7 +6,18 @@ export interface EngineSettings {
 }
 
 export const DEFAULT_ANDROID_ENGINE_URL = 'http://127.0.0.1:3847';
-const ENGINE_STORAGE_KEY = 'velosave_engine_v1';
+const ENGINE_STORAGE_KEY = 'velosave_engine_v2';
+
+export function detectNativeAndroidCapable(): boolean {
+  if (typeof window === 'undefined') return false;
+  const win = window as unknown as {
+    androidBridge?: unknown;
+    Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
+  };
+  if (win.androidBridge) return true;
+  if (!win.Capacitor || typeof win.Capacitor.isNativePlatform !== 'function') return false;
+  return win.Capacitor.isNativePlatform() && win.Capacitor.getPlatform?.() === 'android';
+}
 
 export function validateEngineBaseUrl(rawUrl: string): string | null {
   const trimmed = rawUrl.trim().replace(/\/+$/, '');
@@ -38,20 +49,43 @@ export function resolveApiBaseUrl(
   return validateEngineBaseUrl(envUrl) || '';
 }
 
+export function getDefaultEngineMode(isNativeAndroid = detectNativeAndroidCapable()): ExecutionEngineMode {
+  return isNativeAndroid ? 'android_inbuilt' : 'cloud';
+}
+
+export function parseStoredEngineSettings(
+  rawJson: string | null,
+  isNativeAndroid = false
+): EngineSettings {
+  const fallbackMode = getDefaultEngineMode(isNativeAndroid);
+  if (!rawJson) {
+    return { mode: fallbackMode, customUrl: '' };
+  }
+  try {
+    const parsed = JSON.parse(rawJson) as Partial<EngineSettings>;
+    const customUrl = typeof parsed.customUrl === 'string' ? parsed.customUrl : '';
+    if (parsed.mode === 'android_inbuilt') {
+      return { mode: isNativeAndroid ? 'android_inbuilt' : 'cloud', customUrl };
+    }
+    if (parsed.mode === 'android_local' || parsed.mode === 'custom' || parsed.mode === 'cloud') {
+      return { mode: parsed.mode, customUrl };
+    }
+    return { mode: fallbackMode, customUrl };
+  } catch {
+    return { mode: fallbackMode, customUrl: '' };
+  }
+}
+
 export function loadEngineSettings(): EngineSettings {
+  const isNative = detectNativeAndroidCapable();
   if (typeof window === 'undefined') {
-    return { mode: 'cloud', customUrl: '' };
+    return { mode: getDefaultEngineMode(isNative), customUrl: '' };
   }
   try {
     const raw = window.localStorage.getItem(ENGINE_STORAGE_KEY);
-    if (!raw) return { mode: 'cloud', customUrl: '' };
-    const parsed = JSON.parse(raw) as Partial<EngineSettings>;
-    const mode: ExecutionEngineMode =
-      parsed.mode === 'android_local' || parsed.mode === 'custom' ? parsed.mode : 'cloud';
-    const customUrl = typeof parsed.customUrl === 'string' ? parsed.customUrl : '';
-    return { mode, customUrl };
+    return parseStoredEngineSettings(raw, isNative);
   } catch {
-    return { mode: 'cloud', customUrl: '' };
+    return { mode: getDefaultEngineMode(isNative), customUrl: '' };
   }
 }
 

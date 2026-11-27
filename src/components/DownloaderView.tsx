@@ -43,6 +43,7 @@ interface DownloaderViewProps {
   ) => void;
   recentLibrary: LibraryItem[];
   engineMode: ExecutionEngineMode;
+  isNativeAndroid: boolean;
   onEngineModeChange: (mode: ExecutionEngineMode) => void;
   onOpenLibrary: () => void;
   onOpenAndroid: () => void;
@@ -60,6 +61,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
   onStartPlaylistDownload,
   recentLibrary,
   engineMode,
+  isNativeAndroid,
   onEngineModeChange,
   onOpenLibrary,
   onOpenAndroid,
@@ -191,6 +193,33 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                   role="group"
                   aria-label="Execution engine"
                 >
+                  {isNativeAndroid ? (
+                    <button
+                      type="button"
+                      onClick={() => onEngineModeChange('android_inbuilt')}
+                      aria-pressed={engineMode === 'android_inbuilt'}
+                      className={`min-h-[30px] rounded-md px-2.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                        engineMode === 'android_inbuilt'
+                          ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-900 dark:text-blue-400'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                      }`}
+                    >
+                      Inbuilt yt-dlp
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onEngineModeChange('android_local')}
+                      aria-pressed={engineMode === 'android_local'}
+                      className={`min-h-[30px] rounded-md px-2.5 text-xs font-medium transition-colors whitespace-nowrap ${
+                        engineMode === 'android_local'
+                          ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-900 dark:text-blue-400'
+                          : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+                      }`}
+                    >
+                      Android Local
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => onEngineModeChange('cloud')}
@@ -202,18 +231,6 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                     }`}
                   >
                     Cloud Engine
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onEngineModeChange('android_local')}
-                    aria-pressed={engineMode === 'android_local'}
-                    className={`min-h-[30px] rounded-md px-2.5 text-xs font-medium transition-colors whitespace-nowrap ${
-                      engineMode === 'android_local'
-                        ? 'bg-white text-blue-600 shadow-sm dark:bg-slate-900 dark:text-blue-400'
-                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
-                    }`}
-                  >
-                    Android Local
                   </button>
                 </div>
               </div>
@@ -342,7 +359,11 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                 </li>
                 <li className="flex items-start gap-3">
                   <Cpu className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Run the Android Local Engine on your phone IP so videos &amp; playlists download without cloud restrictions.</span>
+                  <span>
+                    {isNativeAndroid
+                      ? 'Built-in yt-dlp + FFmpeg saves HD MP4 and 320 kbps MP3 directly into Downloads/VeloSave without Termux.'
+                      : 'Android APK bundles yt-dlp + FFmpeg directly on your phone; browser users can run Cloud or Termux Local Engine.'}
+                  </span>
                 </li>
                 <li className="flex items-start gap-3">
                   <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
