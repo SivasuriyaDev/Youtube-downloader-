@@ -1,0 +1,114 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: 'Optional default Cloud API base URL baked into the APK (leave empty to use Android Local Engine)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build VeloSave Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Set up Java 21 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run unit tests & TypeScript check
+        run: |
+          npx --yes tsx --test src/utils/mediaParser.test.ts src/utils/engineConfig.test.ts
+          npm run lint
+
+      - name: Build web bundle for Android
+        env:
+          VITE_API_BASE_URL: ${{ github.event.inputs.api_base_url || vars.VELOSAVE_API_URL || '' }}
+        run: npm run build
+
+      - name: Prepare Capacitor Android project
+        env:
+          APK_VERSION_NAME: ${{ github.ref_type == 'tag' && github.ref_name || format('1.0.{0}', github.run_number) }}
+        run: |
+          npm install --no-save @capacitor/core@^8.6.0 @capacitor/cli@^8.6.0 @capacitor/android@^8.6.0
+          if [ ! -d "android" ]; then
+            npx cap add android
+          fi
+          node scripts/configure-android.mjs
+          npx cap sync android
+
+      - name: Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Copy Debug APK artifact
+        run: |
+          mkdir -p artifacts
+          cp android/app/build/outputs/apk/debug/app-debug.apk artifacts/VeloSave-debug.apk
+
+      - name: Build Signed Release APK (when keystore secrets are configured)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' && secrets.ANDROID_KEYSTORE_PASSWORD != '' && secrets.ANDROID_KEY_ALIAS != '' && secrets.ANDROID_KEY_PASSWORD != '' }}
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 --decode > android/app/release-keystore.jks
+          cd android
+          ./gradlew assembleRelease --no-daemon \
+            -Pandroid.injected.signing.store.file="$(pwd)/app/release-keystore.jks" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+          cd ..
+          cp android/app/build/outputs/apk/release/app-release.apk artifacts/VeloSave-release.apk
+          rm -f android/app/release-keystore.jks
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: velosave-android-apk
+          path: artifacts/*.apk
+          retention-days: 30
+
+      - name: Publish APK to GitHub Release (on v* tags)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.apk
+          generate_release_notes: true
