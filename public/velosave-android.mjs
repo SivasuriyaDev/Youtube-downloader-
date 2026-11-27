@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * VeloSave Android On-Device Engine (Termux / Localhost)
- * Runs yt-dlp + ffmpeg on your own phone IP so YouTube & Instagram
- * downloads bypass cloud datacenter restrictions.
+ * Runs yt-dlp + ffmpeg on your own phone IP so YouTube, Instagram,
+ * playlists, and Spotify track matches download without cloud blocks.
  *
  * Termux setup:
  *   pkg update -y && pkg install -y nodejs yt-dlp ffmpeg
@@ -28,6 +28,8 @@ const ALLOWED_HOSTS = new Set([
   'www.instagram.com',
   'm.instagram.com',
   'instagr.am',
+  'open.spotify.com',
+  'play.spotify.com',
 ]);
 
 function setCors(res) {
@@ -48,7 +50,7 @@ function validateUrl(raw) {
     const u = new URL(String(raw || '').trim());
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
     if (!ALLOWED_HOSTS.has(u.hostname.toLowerCase())) return null;
-    return u.toString();
+    return u;
   } catch {
     return null;
   }
@@ -64,13 +66,65 @@ function sanitizeName(title, ext) {
   return `${base || 'velosave_media'}.${safeExt}`;
 }
 
-function detectPlatform(urlStr) {
-  const h = new URL(urlStr).hostname.toLowerCase();
-  return h.includes('instagram') || h === 'instagr.am' ? 'instagram' : 'youtube';
+function detectPlatform(urlObj) {
+  const h = urlObj.hostname.toLowerCase();
+  if (h.includes('spotify')) return 'spotify';
+  if (h.includes('instagram') || h === 'instagr.am') return 'instagram';
+  return 'youtube';
+}
+
+function buildPlaylistFormats() {
+  return [
+    {
+      id: 'pl-1080',
+      kind: 'video',
+      label: 'Full HD Video',
+      quality: '1080p',
+      container: 'mp4',
+      codec: 'H.264 + AAC',
+      hasAudio: true,
+      hasVideo: true,
+      itag: 'bestvideo[height<=1080]+bestaudio/best[height<=1080]',
+    },
+    {
+      id: 'pl-720',
+      kind: 'video',
+      label: 'HD Video',
+      quality: '720p',
+      container: 'mp4',
+      codec: 'H.264 + AAC',
+      hasAudio: true,
+      hasVideo: true,
+      itag: 'bestvideo[height<=720]+bestaudio/best[height<=720]',
+    },
+    {
+      id: 'pl-mp3',
+      kind: 'audio',
+      label: 'MP3 Audio Track',
+      quality: '320 kbps',
+      container: 'mp3',
+      codec: 'MP3',
+      hasAudio: true,
+      hasVideo: false,
+      itag: 'bestaudio',
+    },
+    {
+      id: 'pl-m4a',
+      kind: 'audio',
+      label: 'M4A Audio Track',
+      quality: '192 kbps',
+      container: 'm4a',
+      codec: 'AAC',
+      hasAudio: true,
+      hasVideo: false,
+      itag: 'bestaudio',
+    },
+  ];
 }
 
 function mapYtDlpFormats(info, canonicalUrl) {
-  const platform = detectPlatform(canonicalUrl);
+  const urlObj = new URL(canonicalUrl);
+  const platform = detectPlatform(urlObj);
   const rawFormats = Array.isArray(info.formats) ? info.formats : [];
   const formats = [];
   const seenHeights = new Set();
@@ -113,17 +167,30 @@ function mapYtDlpFormats(info, canonicalUrl) {
     });
   }
 
-  formats.push({
-    id: 'a-m4a',
-    kind: 'audio',
-    label: 'Audio Track',
-    quality: '192 kbps',
-    container: 'm4a',
-    codec: 'AAC',
-    hasAudio: true,
-    hasVideo: false,
-    itag: 'bestaudio',
-  });
+  formats.push(
+    {
+      id: 'a-mp3',
+      kind: 'audio',
+      label: 'MP3 Audio Track',
+      quality: '320 kbps',
+      container: 'mp3',
+      codec: 'MP3',
+      hasAudio: true,
+      hasVideo: false,
+      itag: 'bestaudio',
+    },
+    {
+      id: 'a-m4a',
+      kind: 'audio',
+      label: 'Audio Track',
+      quality: '192 kbps',
+      container: 'm4a',
+      codec: 'AAC',
+      hasAudio: true,
+      hasVideo: false,
+      itag: 'bestaudio',
+    }
+  );
 
   if (info.thumbnail) {
     formats.push({
@@ -149,6 +216,130 @@ function mapYtDlpFormats(info, canonicalUrl) {
     durationSeconds: Number(info.duration || 0),
     thumbnailUrl: info.thumbnail || '',
     formats,
+  };
+}
+
+async function inspectSpotifyLocal(urlObj) {
+  const parts = urlObj.pathname.split('/').filter(Boolean);
+  const cleaned = parts[0]?.startsWith('intl-') ? parts.slice(1) : parts;
+  const kind = cleaned[0];
+  const id = cleaned[1];
+  if (!['playlist', 'album', 'track'].includes(kind) || !id) {
+    throw new Error('Invalid Spotify playlist, album, or track URL.');
+  }
+
+  const res = await fetch(`https://open.spotify.com/embed/${kind}/${id}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+  });
+  if (!res.ok) throw new Error('Could not fetch public Spotify metadata.');
+  const html = await res.text();
+  const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!match) throw new Error('Could not parse Spotify metadata.');
+
+  const data = JSON.parse(match[1]);
+  const entity = data?.props?.pageProps?.state?.data?.entity;
+  if (!entity || !entity.name) throw new Error('Spotify item appears private or unavailable.');
+
+  const cover = entity.coverArt?.sources?.[0]?.url || entity.visualIdentity?.image?.[0]?.url || '';
+  const canonicalUrl = `https://open.spotify.com/${kind}/${id}`;
+
+  if (kind === 'track') {
+    const artist =
+      entity.artists?.map((a) => a.name).filter(Boolean).join(', ') ||
+      entity.subtitle ||
+      'Spotify Artist';
+    const searchQuery = `${artist} - ${entity.name} audio`;
+    return {
+      id,
+      platform: 'spotify',
+      contentType: 'track',
+      canonicalUrl,
+      title: `${entity.name} — ${artist}`,
+      author: artist,
+      durationSeconds: Math.round(Number(entity.duration || 0) / 1000),
+      thumbnailUrl: cover,
+      formats: buildPlaylistFormats().map((f) => ({ ...f, searchQuery })),
+    };
+  }
+
+  const rawTracks = Array.isArray(entity.trackList) ? entity.trackList : [];
+  if (rawTracks.length === 0) throw new Error('No tracks found in this Spotify playlist.');
+
+  const tracks = rawTracks.map((tr, idx) => {
+    const trackTitle = tr.title || `Track ${idx + 1}`;
+    const trackArtist = tr.subtitle || entity.subtitle || 'Artist';
+    const uriPart = tr.uri?.split(':').pop() || tr.uid || `${id}-${idx + 1}`;
+    return {
+      id: String(uriPart),
+      index: idx + 1,
+      platform: 'spotify',
+      title: trackTitle,
+      author: trackArtist,
+      durationSeconds: Math.round(Number(tr.duration || 0) / 1000),
+      thumbnailUrl: cover,
+      canonicalUrl: tr.uri?.startsWith('spotify:track:')
+        ? `https://open.spotify.com/track/${uriPart}`
+        : canonicalUrl,
+      searchQuery: `${trackArtist} - ${trackTitle} audio`,
+    };
+  });
+
+  return {
+    id,
+    platform: 'spotify',
+    contentType: kind,
+    canonicalUrl,
+    title: entity.name,
+    author: entity.subtitle || 'Spotify Playlist',
+    durationSeconds: tracks.reduce((a, b) => a + b.durationSeconds, 0),
+    thumbnailUrl: cover,
+    formats: buildPlaylistFormats(),
+    tracks,
+  };
+}
+
+async function inspectYouTubePlaylistLocal(canonicalUrl, playlistId) {
+  const { stdout } = await execFileAsync(
+    'yt-dlp',
+    ['--no-warnings', '--flat-playlist', '--playlist-end', '50', '-J', canonicalUrl],
+    { maxBuffer: 16 * 1024 * 1024, timeout: 35000 }
+  );
+  const info = JSON.parse(stdout);
+  const entries = Array.isArray(info.entries) ? info.entries.filter((e) => e && (e.id || e.url)) : [];
+  if (entries.length === 0) throw new Error('YouTube playlist is empty or private.');
+
+  const firstThumb =
+    info.thumbnails?.[info.thumbnails.length - 1]?.url ||
+    (entries[0]?.id ? `https://i.ytimg.com/vi/${entries[0].id}/hqdefault.jpg` : '');
+
+  const tracks = entries.map((entry, idx) => {
+    const vid = entry.id || '';
+    const thumb =
+      entry.thumbnails?.[entry.thumbnails.length - 1]?.url ||
+      (vid ? `https://i.ytimg.com/vi/${vid}/hqdefault.jpg` : '');
+    return {
+      id: vid || `${playlistId}-${idx + 1}`,
+      index: idx + 1,
+      platform: 'youtube',
+      title: entry.title || `Video ${idx + 1}`,
+      author: entry.uploader || entry.channel || info.uploader || info.channel || 'YouTube Creator',
+      durationSeconds: Number(entry.duration || 0),
+      thumbnailUrl: thumb,
+      canonicalUrl: vid ? `https://www.youtube.com/watch?v=${vid}` : entry.url || canonicalUrl,
+    };
+  });
+
+  return {
+    id: playlistId,
+    platform: 'youtube',
+    contentType: 'playlist',
+    canonicalUrl,
+    title: info.title || 'YouTube Playlist',
+    author: info.uploader || info.channel || 'YouTube Playlist',
+    durationSeconds: tracks.reduce((a, b) => a + b.durationSeconds, 0),
+    thumbnailUrl: firstThumb,
+    formats: buildPlaylistFormats(),
+    tracks,
   };
 }
 
@@ -185,20 +376,34 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    const safeUrl = validateUrl(parsedBody.url);
-    if (!safeUrl) {
-      sendJson(res, 400, { error: 'Valid YouTube or Instagram URL is required.' });
+    const urlObj = validateUrl(parsedBody.url);
+    if (!urlObj) {
+      sendJson(res, 400, { error: 'Valid YouTube, Instagram, or Spotify URL is required.' });
       return;
     }
 
+    const platform = detectPlatform(urlObj);
+
     try {
+      if (platform === 'spotify') {
+        const spResult = await inspectSpotifyLocal(urlObj);
+        sendJson(res, 200, spResult);
+        return;
+      }
+
+      if (platform === 'youtube' && urlObj.pathname.startsWith('/playlist') && urlObj.searchParams.get('list')) {
+        const plResult = await inspectYouTubePlaylistLocal(urlObj.toString(), urlObj.searchParams.get('list'));
+        sendJson(res, 200, plResult);
+        return;
+      }
+
       const { stdout } = await execFileAsync(
         'yt-dlp',
-        ['--no-warnings', '--no-playlist', '-J', safeUrl],
+        ['--no-warnings', '--no-playlist', '-J', urlObj.toString()],
         { maxBuffer: 16 * 1024 * 1024, timeout: 30000 }
       );
       const info = JSON.parse(stdout);
-      sendJson(res, 200, mapYtDlpFormats(info, safeUrl));
+      sendJson(res, 200, mapYtDlpFormats(info, urlObj.toString()));
     } catch (err) {
       sendJson(res, 422, {
         error: err?.stderr?.trim() || err?.message || 'yt-dlp failed to inspect this link.',
@@ -208,10 +413,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'GET' && reqUrl.pathname === '/api/download') {
-    const safeUrl = validateUrl(reqUrl.searchParams.get('url'));
+    const safeUrlObj = validateUrl(reqUrl.searchParams.get('url'));
+    const rawQuery = reqUrl.searchParams.get('query') || '';
     const directUrl = reqUrl.searchParams.get('directUrl') || '';
     const formatSelector = reqUrl.searchParams.get('itag') || 'bestvideo+bestaudio/best';
-    const ext = reqUrl.searchParams.get('ext') || 'mp4';
+    const rawExt = reqUrl.searchParams.get('ext') || 'mp4';
+    const ext = rawExt === 'mp3' ? 'mp3' : rawExt === 'm4a' ? 'm4a' : rawExt === 'jpg' ? 'jpg' : 'mp4';
     const filename = sanitizeName(
       (reqUrl.searchParams.get('filename') || 'velosave_media').replace(/\.[a-zA-Z0-9]+$/, ''),
       ext
@@ -238,15 +445,24 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (!safeUrl) {
-      sendJson(res, 400, { error: 'Valid media URL is required.' });
+    const cleanQuery = rawQuery.replace(/[\r\n\0]/g, ' ').trim().slice(0, 160);
+    const target = cleanQuery
+      ? `ytsearch1:${cleanQuery}`
+      : safeUrlObj && detectPlatform(safeUrlObj) !== 'spotify'
+      ? safeUrlObj.toString()
+      : null;
+
+    if (!target) {
+      sendJson(res, 400, { error: 'Valid media URL or track query is required.' });
       return;
     }
 
     const tmpOut = path.join(os.tmpdir(), `velosave-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.${ext}`);
     const args =
-      ext === 'm4a'
-        ? ['--no-warnings', '--no-playlist', '-x', '--audio-format', 'm4a', '-o', tmpOut, safeUrl]
+      ext === 'mp3'
+        ? ['--no-warnings', '--no-playlist', '-x', '--audio-format', 'mp3', '--audio-quality', '0', '-o', tmpOut, target]
+        : ext === 'm4a'
+        ? ['--no-warnings', '--no-playlist', '-x', '--audio-format', 'm4a', '-o', tmpOut, target]
         : [
             '--no-warnings',
             '--no-playlist',
@@ -256,7 +472,7 @@ const server = http.createServer(async (req, res) => {
             'mp4',
             '-o',
             tmpOut,
-            safeUrl,
+            target,
           ];
 
     const child = spawn('yt-dlp', args);
@@ -273,7 +489,7 @@ const server = http.createServer(async (req, res) => {
         }
         const stat = await fs.promises.stat(tmpOut);
         res.writeHead(200, {
-          'Content-Type': ext === 'm4a' ? 'audio/mp4' : 'video/mp4',
+          'Content-Type': ext === 'mp3' ? 'audio/mpeg' : ext === 'm4a' ? 'audio/mp4' : 'video/mp4',
           'Content-Length': String(stat.size),
           'Content-Disposition': `attachment; filename="${filename}"`,
         });

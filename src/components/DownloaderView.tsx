@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowDownToLine,
@@ -8,13 +8,20 @@ import {
   Film,
   Image as ImageIcon,
   Link2,
+  ListMusic,
   Loader2,
   Music,
   Share2,
   Smartphone,
   X,
 } from 'lucide-react';
-import type { FormatKind, InspectedMedia, LibraryItem, MediaFormat } from '../types/media';
+import type {
+  FormatKind,
+  InspectedMedia,
+  LibraryItem,
+  MediaFormat,
+  PlaylistTrackItem,
+} from '../types/media';
 import type { ExecutionEngineMode } from '../utils/engineConfig';
 import { QUICK_SAMPLE_LINKS } from '../data/sampleMedia';
 import { formatBytes, formatDuration } from '../utils/mediaParser';
@@ -29,6 +36,11 @@ interface DownloaderViewProps {
   inspectedMedia: InspectedMedia | null;
   onInspect: (targetUrl?: string) => void;
   onStartDownload: (media: InspectedMedia, format: MediaFormat) => void;
+  onStartPlaylistDownload: (
+    playlist: InspectedMedia,
+    tracks: PlaylistTrackItem[],
+    format: MediaFormat
+  ) => void;
   recentLibrary: LibraryItem[];
   engineMode: ExecutionEngineMode;
   onEngineModeChange: (mode: ExecutionEngineMode) => void;
@@ -45,6 +57,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
   inspectedMedia,
   onInspect,
   onStartDownload,
+  onStartPlaylistDownload,
   recentLibrary,
   engineMode,
   onEngineModeChange,
@@ -53,14 +66,26 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
 }) => {
   const [formatFilter, setFormatFilter] = useState<'all' | FormatKind>('all');
   const [selectedFormatId, setSelectedFormatId] = useState<string | null>(null);
+  const [selectedTrackIds, setSelectedTrackIds] = useState<Set<string>>(new Set());
   const [pasteNotice, setPasteNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (inspectedMedia && inspectedMedia.formats.length > 0) {
       setFormatFilter('all');
-      setSelectedFormatId(inspectedMedia.formats[0].id);
+      if (inspectedMedia.platform === 'spotify') {
+        const audioFirst = inspectedMedia.formats.find((f) => f.kind === 'audio');
+        setSelectedFormatId(audioFirst?.id || inspectedMedia.formats[0].id);
+      } else {
+        setSelectedFormatId(inspectedMedia.formats[0].id);
+      }
+      if (inspectedMedia.tracks && inspectedMedia.tracks.length > 0) {
+        setSelectedTrackIds(new Set(inspectedMedia.tracks.map((t) => t.id)));
+      } else {
+        setSelectedTrackIds(new Set());
+      }
     } else {
       setSelectedFormatId(null);
+      setSelectedTrackIds(new Set());
     }
   }, [inspectedMedia]);
 
@@ -75,7 +100,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
       if (text && text.trim()) {
         onUrlInputChange(text.trim());
       } else {
-        setPasteNotice('Your clipboard is empty. Copy a YouTube or Instagram link first.');
+        setPasteNotice('Your clipboard is empty. Copy a YouTube, Instagram, or Spotify link first.');
       }
     } catch {
       setPasteNotice('Tap and hold the link box to paste directly on Android.');
@@ -87,6 +112,8 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
     onInspect();
   };
 
+  const isPlaylistView = Boolean(inspectedMedia?.tracks && inspectedMedia.tracks.length > 0);
+
   const filteredFormats = inspectedMedia
     ? inspectedMedia.formats.filter((f) => formatFilter === 'all' || f.kind === formatFilter)
     : [];
@@ -96,6 +123,40 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
     filteredFormats[0] ||
     inspectedMedia?.formats[0] ||
     null;
+
+  const selectedTracks = useMemo(() => {
+    if (!inspectedMedia?.tracks) return [];
+    return inspectedMedia.tracks.filter((t) => selectedTrackIds.has(t.id));
+  }, [inspectedMedia, selectedTrackIds]);
+
+  const toggleTrackSelection = (trackId: string) => {
+    setSelectedTrackIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(trackId)) {
+        next.delete(trackId);
+      } else {
+        next.add(trackId);
+      }
+      return next;
+    });
+  };
+
+  const toggleSelectAllTracks = () => {
+    if (!inspectedMedia?.tracks) return;
+    if (selectedTrackIds.size === inspectedMedia.tracks.length) {
+      setSelectedTrackIds(new Set());
+    } else {
+      setSelectedTrackIds(new Set(inspectedMedia.tracks.map((t) => t.id)));
+    }
+  };
+
+  const handleSingleTrackDownload = (track: PlaylistTrackItem) => {
+    if (!inspectedMedia || !activeFormat) return;
+    onStartPlaylistDownload(inspectedMedia, [track], activeFormat);
+  };
+
+  const formatPlatformLabel = (platform: InspectedMedia['platform']) =>
+    platform === 'spotify' ? 'Spotify' : platform === 'youtube' ? 'YouTube' : 'Instagram';
 
   return (
     <div className="space-y-6">
@@ -109,10 +170,10 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                 className="font-display text-2xl font-bold tracking-tight text-slate-900 md:text-3xl dark:text-slate-100"
                 style={{ textWrap: 'balance' }}
               >
-                Save YouTube &amp; Instagram videos cleanly on Android
+                Save YouTube, Instagram &amp; Spotify media on Android
               </h1>
               <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-400">
-                Paste any YouTube video, Shorts, or Instagram Reel link to inspect full MP4 resolutions, M4A audio tracks, and cover images.
+                Paste any YouTube video or playlist, Instagram Reel, or Spotify playlist link to download MP4 video, MP3/M4A audio, or cover images.
               </p>
             </div>
 
@@ -122,7 +183,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                   htmlFor="media-url-input"
                   className="text-xs font-medium text-slate-600 dark:text-slate-400"
                 >
-                  Video or Reel link
+                  Video, Reel, or Playlist link
                 </label>
 
                 <div
@@ -159,16 +220,13 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
 
               <div className="flex flex-col gap-2.5 sm:flex-row">
                 <div className="flex h-12 flex-1 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 pl-3.5 pr-1.5 focus-within:border-blue-600 focus-within:bg-white dark:border-slate-700 dark:bg-slate-950 dark:focus-within:border-blue-500">
-                  <Link2
-                    className="h-4 w-4 shrink-0 text-slate-400"
-                    aria-hidden="true"
-                  />
+                  <Link2 className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
                   <input
                     id="media-url-input"
                     type="url"
                     inputMode="url"
                     autoComplete="off"
-                    placeholder="https://youtu.be/... or https://instagram.com/reel/..."
+                    placeholder="YouTube video/playlist, Instagram Reel, or Spotify playlist URL"
                     value={urlInput}
                     onChange={(e) => onUrlInputChange(e.target.value)}
                     aria-invalid={inspectError ? 'true' : 'false'}
@@ -279,25 +337,26 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
               </h2>
               <ul className="mt-3 space-y-3 text-sm text-slate-600 dark:text-slate-300">
                 <li className="flex items-start gap-3">
+                  <ListMusic className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                  <span>Batch download entire YouTube playlists &amp; Spotify playlists/albums as MP3, M4A, or MP4.</span>
+                </li>
+                <li className="flex items-start gap-3">
                   <Cpu className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Run the Android Local Engine on your phone IP so all YouTube &amp; Instagram videos download without cloud restrictions.</span>
+                  <span>Run the Android Local Engine on your phone IP so videos &amp; playlists download without cloud restrictions.</span>
                 </li>
                 <li className="flex items-start gap-3">
                   <Share2 className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>Share straight from the YouTube or Instagram app into VeloSave once installed.</span>
-                </li>
-                <li className="flex items-start gap-3">
-                  <Smartphone className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />
-                  <span>One-handed thumb navigation with offline saved Library history.</span>
+                  <span>Share straight from YouTube, Instagram, or Spotify into VeloSave once installed.</span>
                 </li>
               </ul>
               <div className="mt-4 border-t border-slate-100 pt-3 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={onOpenAndroid}
-                  className="inline-flex min-h-[44px] items-center text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
+                  className="inline-flex min-h-[44px] items-center gap-1.5 text-xs font-semibold text-blue-600 hover:underline dark:text-blue-400"
                 >
-                  Open Android Engine &amp; Install Guide →
+                  <Smartphone className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>Open Android Engine &amp; Install Guide →</span>
                 </button>
               </div>
             </div>
@@ -330,7 +389,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                           {item.title}
                         </p>
                         <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                          <span>{item.platform === 'youtube' ? 'YouTube' : 'Instagram'}</span>
+                          <span>{formatPlatformLabel(item.platform)}</span>
                           <span aria-hidden="true"> · </span>
                           <span>{item.formatLabel}</span>
                           <span aria-hidden="true"> · </span>
@@ -364,8 +423,163 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
         </section>
       )}
 
-      {/* Inspected Media Result Card */}
-      {inspectedMedia && !isInspecting && (
+      {/* Playlist / Album Result View */}
+      {inspectedMedia && !isInspecting && isPlaylistView && inspectedMedia.tracks && (
+        <section
+          aria-label="Playlist tracks and batch download"
+          className="space-y-5 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm md:p-6 dark:border-slate-800 dark:bg-slate-900"
+        >
+          {/* Playlist Header */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-4">
+              <MediaThumbnail
+                src={inspectedMedia.thumbnailUrl}
+                alt={inspectedMedia.title}
+                platform={inspectedMedia.platform}
+                className="h-20 w-24 shrink-0 rounded-xl sm:h-24 sm:w-32"
+              />
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+                  <span className="whitespace-nowrap">
+                    {formatPlatformLabel(inspectedMedia.platform)}{' '}
+                    {inspectedMedia.contentType === 'album' ? 'Album' : 'Playlist'}
+                  </span>
+                  <span className="font-mono tabular-nums whitespace-nowrap">
+                    · {inspectedMedia.tracks.length} tracks
+                  </span>
+                  {inspectedMedia.durationSeconds > 0 && (
+                    <span className="font-mono tabular-nums whitespace-nowrap">
+                      · {formatDuration(inspectedMedia.durationSeconds)}
+                    </span>
+                  )}
+                </div>
+                <h2 className="font-display truncate text-lg font-bold text-slate-900 md:text-xl dark:text-slate-100">
+                  {inspectedMedia.title}
+                </h2>
+                <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                  {inspectedMedia.author}
+                  {inspectedMedia.isDemo ? ' · Sample Preview' : ''}
+                </p>
+              </div>
+            </div>
+
+            {activeFormat && (
+              <button
+                type="button"
+                disabled={selectedTracks.length === 0}
+                onClick={() => onStartPlaylistDownload(inspectedMedia, selectedTracks, activeFormat)}
+                className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50 whitespace-nowrap shrink-0"
+              >
+                <ArrowDownToLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+                <span>
+                  Download Selected ({selectedTracks.length}) · {activeFormat.container.toUpperCase()}
+                </span>
+              </button>
+            )}
+          </div>
+
+          {/* Format Selector for Batch */}
+          <div className="space-y-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Output format for all selected tracks
+              </span>
+              <button
+                type="button"
+                onClick={toggleSelectAllTracks}
+                className="min-h-[36px] rounded-lg px-2.5 text-xs font-semibold text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-950/50"
+              >
+                {selectedTrackIds.size === inspectedMedia.tracks.length
+                  ? 'Deselect All'
+                  : 'Select All'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              {inspectedMedia.formats.map((fmt) => {
+                const isSelected = activeFormat?.id === fmt.id;
+                return (
+                  <button
+                    key={fmt.id}
+                    type="button"
+                    onClick={() => setSelectedFormatId(fmt.id)}
+                    aria-pressed={isSelected}
+                    className={`flex min-h-[42px] items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-xs font-medium transition-colors ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/50 dark:text-blue-300'
+                        : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-300'
+                    }`}
+                  >
+                    {fmt.kind === 'audio' ? (
+                      <Music className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    ) : (
+                      <Film className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    )}
+                    <span className="whitespace-nowrap">
+                      {fmt.quality} {fmt.container.toUpperCase()}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Track List */}
+          <div className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto rounded-xl border border-slate-200/80 dark:divide-slate-800 dark:border-slate-800">
+            {inspectedMedia.tracks.map((track) => {
+              const checked = selectedTrackIds.has(track.id);
+              return (
+                <div
+                  key={track.id}
+                  className="flex items-center justify-between gap-3 px-3.5 py-2.5 hover:bg-slate-50/80 dark:hover:bg-slate-800/40"
+                >
+                  <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleTrackSelection(track.id)}
+                      aria-label={`Select ${track.title}`}
+                      className="h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                    />
+                    <span className="w-6 shrink-0 font-mono text-xs text-slate-400 tabular-nums">
+                      {String(track.index).padStart(2, '0')}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-slate-900 dark:text-slate-100">
+                        {track.title}
+                      </p>
+                      <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                        <span>{track.author}</span>
+                        {track.durationSeconds > 0 && (
+                          <>
+                            <span aria-hidden="true"> · </span>
+                            <span className="font-mono tabular-nums">
+                              {formatDuration(track.durationSeconds)}
+                            </span>
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSingleTrackDownload(track)}
+                    aria-label={`Save ${track.title}`}
+                    className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-700 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 shrink-0"
+                  >
+                    <ArrowDownToLine className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span className="hidden sm:inline">Save</span>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Single Media Result Card */}
+      {inspectedMedia && !isInspecting && !isPlaylistView && (
         <section
           aria-label="Inspected media formats"
           className="grid gap-5 rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm lg:grid-cols-12 lg:gap-7 md:p-6 dark:border-slate-800 dark:bg-slate-900"
@@ -388,7 +602,7 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
               </h2>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
                 <span className="font-medium text-slate-700 dark:text-slate-300">
-                  {inspectedMedia.platform === 'youtube' ? 'YouTube' : 'Instagram'}
+                  {formatPlatformLabel(inspectedMedia.platform)}
                 </span>
                 <span aria-hidden="true">·</span>
                 <span>{inspectedMedia.author}</span>
@@ -407,6 +621,21 @@ export const DownloaderView: React.FC<DownloaderViewProps> = ({
                   </>
                 )}
               </div>
+              {inspectedMedia.playlistUrl && (
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onUrlInputChange(inspectedMedia.playlistUrl!);
+                      onInspect(inspectedMedia.playlistUrl!);
+                    }}
+                    className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/60 dark:text-blue-300"
+                  >
+                    <ListMusic className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>Load Full Playlist</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

@@ -40,6 +40,38 @@ test('parses Instagram reel and post URLs', () => {
   assert.equal(post.id, 'DB12345678');
 });
 
+test('parses YouTube playlist and watch+playlist URLs', () => {
+  const pl = parseMediaUrl('https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf');
+  assert.equal(pl.valid, true);
+  assert.equal(pl.platform, 'youtube');
+  assert.equal(pl.contentType, 'playlist');
+  assert.equal(pl.id, 'PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf');
+
+  const watchWithList = parseMediaUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ&list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf');
+  assert.equal(watchWithList.valid, true);
+  assert.equal(watchWithList.contentType, 'video');
+  assert.equal(watchWithList.playlistUrl, 'https://www.youtube.com/playlist?list=PLrAXtmErZgOeiKm4sgNOknGvNjby9efdf');
+});
+
+test('parses Spotify playlist, album, and track URLs', () => {
+  const spPlaylist = parseMediaUrl('https://open.spotify.com/playlist/37i9dQZF1DX4JAvHpjipBk?si=abc');
+  assert.equal(spPlaylist.valid, true);
+  assert.equal(spPlaylist.platform, 'spotify');
+  assert.equal(spPlaylist.contentType, 'playlist');
+  assert.equal(spPlaylist.canonicalUrl, 'https://open.spotify.com/playlist/37i9dQZF1DX4JAvHpjipBk');
+
+  const spIntl = parseMediaUrl('https://open.spotify.com/intl-en/album/4aawyAB9vmqN3uQ7FjRGTy');
+  assert.equal(spIntl.valid, true);
+  assert.equal(spIntl.platform, 'spotify');
+  assert.equal(spIntl.contentType, 'album');
+  assert.equal(spIntl.canonicalUrl, 'https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy');
+
+  const spTrack = parseMediaUrl('open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT');
+  assert.equal(spTrack.valid, true);
+  assert.equal(spTrack.platform, 'spotify');
+  assert.equal(spTrack.contentType, 'track');
+});
+
 test('rejects unsafe schemes, private IPs, and unsupported hosts', () => {
   assert.equal(parseMediaUrl('javascript:alert(1)').valid, false);
   assert.equal(parseMediaUrl('http://localhost:3000/watch?v=dQw4w9WgXcQ').valid, false);
@@ -48,9 +80,12 @@ test('rejects unsafe schemes, private IPs, and unsupported hosts', () => {
   assert.equal(parseMediaUrl('   ').valid, false);
 });
 
-test('extracts shared YouTube or Instagram link from Android share_target query params', () => {
+test('extracts shared YouTube, Instagram, or Spotify link from Android share_target query params', () => {
   const shared = extractSharedUrl('?title=Cool+Reel&text=Watch+this+https%3A%2F%2Fwww.instagram.com%2Freel%2FC8xYz9AbCdE%2F%21');
   assert.equal(shared, 'https://www.instagram.com/reel/C8xYz9AbCdE/');
+
+  const spotifyShared = extractSharedUrl('?text=Listen+https%3A%2F%2Fopen.spotify.com%2Fplaylist%2F37i9dQZF1DX4JAvHpjipBk');
+  assert.equal(spotifyShared, 'https://open.spotify.com/playlist/37i9dQZF1DX4JAvHpjipBk');
 
   const direct = extractSharedUrl('?url=https%3A%2F%2Fyoutu.be%2FdQw4w9WgXcQ');
   assert.equal(direct, 'https://youtu.be/dQw4w9WgXcQ');

@@ -1,6 +1,13 @@
-export type MediaPlatform = 'youtube' | 'instagram';
+export type MediaPlatform = 'youtube' | 'instagram' | 'spotify';
 
-export type MediaContentType = 'video' | 'short' | 'reel' | 'post';
+export type MediaContentType =
+  | 'video'
+  | 'short'
+  | 'reel'
+  | 'post'
+  | 'playlist'
+  | 'album'
+  | 'track';
 
 export type FormatKind = 'video' | 'audio' | 'thumbnail';
 
@@ -9,7 +16,7 @@ export interface MediaFormat {
   kind: FormatKind;
   label: string;
   quality: string;
-  container: 'mp4' | 'm4a' | 'webm' | 'jpg';
+  container: 'mp4' | 'm4a' | 'mp3' | 'webm' | 'jpg';
   codec?: string;
   sizeBytes?: number;
   hasAudio: boolean;
@@ -17,6 +24,20 @@ export interface MediaFormat {
   itag?: number | string;
   sampleKey?: 'yt-demo' | 'ig-demo';
   directUrl?: string;
+  searchQuery?: string;
+}
+
+export interface PlaylistTrackItem {
+  id: string;
+  index: number;
+  platform: MediaPlatform;
+  title: string;
+  author: string;
+  durationSeconds: number;
+  thumbnailUrl: string;
+  canonicalUrl: string;
+  searchQuery?: string;
+  sampleKey?: 'yt-demo' | 'ig-demo';
 }
 
 export interface InspectedMedia {
@@ -24,12 +45,14 @@ export interface InspectedMedia {
   platform: MediaPlatform;
   contentType: MediaContentType;
   canonicalUrl: string;
+  playlistUrl?: string;
   title: string;
   author: string;
   durationSeconds: number;
   thumbnailUrl: string;
   isDemo?: boolean;
   formats: MediaFormat[];
+  tracks?: PlaylistTrackItem[];
 }
 
 export type DownloadStatus = 'downloading' | 'completed' | 'failed' | 'cancelled';
@@ -42,6 +65,7 @@ export interface DownloadTask {
   author: string;
   thumbnailUrl: string;
   canonicalUrl: string;
+  searchQuery?: string;
   format: MediaFormat;
   status: DownloadStatus;
   progress: number;
@@ -62,6 +86,7 @@ export interface LibraryItem {
   durationSeconds: number;
   thumbnailUrl: string;
   canonicalUrl: string;
+  searchQuery?: string;
   formatLabel: string;
   container: string;
   sizeBytes: number;

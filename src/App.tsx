@@ -28,6 +28,7 @@ import type {
   InspectedMedia,
   LibraryItem,
   MediaFormat,
+  PlaylistTrackItem,
 } from './types/media';
 
 export default function App() {
@@ -65,7 +66,7 @@ export default function App() {
       const parsed = parseMediaUrl(candidate);
 
       if (!parsed.valid || !parsed.canonicalUrl) {
-        setInspectError(parsed.error || 'Please enter a valid YouTube or Instagram link.');
+        setInspectError(parsed.error || 'Please enter a valid YouTube, Instagram, or Spotify link.');
         setInspectErrorCode(null);
         return;
       }
@@ -134,7 +135,11 @@ export default function App() {
       abortControllersRef.current.set(task.taskId, controller);
 
       const { endpoint, filename } = buildDownloadEndpoint(
-        { canonicalUrl: task.canonicalUrl, title: task.title },
+        {
+          canonicalUrl: task.canonicalUrl,
+          title: task.title,
+          searchQuery: task.searchQuery,
+        },
         task.format,
         apiBaseUrl
       );
@@ -171,7 +176,7 @@ export default function App() {
         );
 
         const newLibItem: LibraryItem = {
-          id: `${task.mediaId}-${task.format.id}-${Date.now()}`,
+          id: `${task.mediaId}-${task.format.id}-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
           mediaId: task.mediaId,
           platform: task.platform,
           contentType,
@@ -180,6 +185,7 @@ export default function App() {
           durationSeconds,
           thumbnailUrl: task.thumbnailUrl,
           canonicalUrl: task.canonicalUrl,
+          searchQuery: task.searchQuery,
           formatLabel: task.format.quality,
           container: task.format.container,
           sizeBytes: finalBytes,
@@ -201,7 +207,7 @@ export default function App() {
                   i.container === newLibItem.container
                 )
             ),
-          ].slice(0, 50);
+          ].slice(0, 100);
           saveLibraryItems(next);
           return next;
         });
@@ -237,6 +243,7 @@ export default function App() {
       author: media.author,
       thumbnailUrl: media.thumbnailUrl,
       canonicalUrl: media.canonicalUrl,
+      searchQuery: format.searchQuery,
       format,
       status: 'downloading',
       progress: 0,
@@ -249,6 +256,65 @@ export default function App() {
     setTasks((prev) => [newTask, ...prev]);
     setActiveTab('queue');
     void executeTask(newTask, media.contentType, media.durationSeconds);
+  };
+
+  const handleStartPlaylistDownload = (
+    playlist: InspectedMedia,
+    tracks: PlaylistTrackItem[],
+    format: MediaFormat
+  ) => {
+    if (tracks.length === 0) return;
+
+    const batch: { task: DownloadTask; durationSeconds: number }[] = tracks.map((track, idx) => {
+      const displayTitle =
+        track.platform === 'spotify' ? `${track.author} - ${track.title}` : track.title;
+      const trackFormat: MediaFormat = {
+        ...format,
+        sampleKey: track.sampleKey ?? format.sampleKey,
+        searchQuery: track.searchQuery,
+      };
+      const taskId = `task-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`;
+      return {
+        task: {
+          taskId,
+          mediaId: track.id,
+          platform: track.platform,
+          title: displayTitle,
+          author: track.author,
+          thumbnailUrl: track.thumbnailUrl || playlist.thumbnailUrl,
+          canonicalUrl: track.canonicalUrl,
+          searchQuery: track.searchQuery,
+          format: trackFormat,
+          status: 'downloading',
+          progress: 0,
+          loadedBytes: 0,
+          totalBytes: 0,
+          filename: sanitizeFilename(displayTitle, trackFormat.container),
+          createdAt: Date.now() + idx,
+        },
+        durationSeconds: track.durationSeconds,
+      };
+    });
+
+    setTasks((prev) => [...batch.map((b) => b.task), ...prev]);
+    setActiveTab('queue');
+
+    // Run up to 2 concurrent downloads so Android & cloud engines stay responsive
+    void (async () => {
+      const queue = [...batch];
+      const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+        while (queue.length > 0) {
+          const next = queue.shift();
+          if (!next) break;
+          await executeTask(
+            next.task,
+            next.task.platform === 'spotify' ? 'track' : 'video',
+            next.durationSeconds
+          );
+        }
+      });
+      await Promise.all(workers);
+    })();
   };
 
   const handleCancelTask = (taskId: string) => {
@@ -269,7 +335,7 @@ export default function App() {
       createdAt: Date.now(),
     };
     setTasks((prev) => [retried, ...prev.filter((t) => t.taskId !== task.taskId)]);
-    void executeTask(retried, 'video', 0);
+    void executeTask(retried, task.platform === 'spotify' ? 'track' : 'video', 0);
   };
 
   const handleRemoveTask = (taskId: string) => {
@@ -284,7 +350,7 @@ export default function App() {
     const format: MediaFormat = {
       id: `${item.formatLabel}-${item.container}`,
       kind:
-        item.container === 'm4a' || item.container === 'webm'
+        item.container === 'm4a' || item.container === 'mp3' || item.container === 'webm'
           ? 'audio'
           : item.container === 'jpg'
           ? 'thumbnail'
@@ -298,6 +364,7 @@ export default function App() {
       sampleKey: item.sampleKey,
       itag: item.itag,
       directUrl: item.directUrl,
+      searchQuery: item.searchQuery,
     };
 
     const task: DownloadTask = {
@@ -308,6 +375,7 @@ export default function App() {
       author: item.author,
       thumbnailUrl: item.thumbnailUrl,
       canonicalUrl: item.canonicalUrl,
+      searchQuery: item.searchQuery,
       format,
       status: 'downloading',
       progress: 0,
@@ -371,6 +439,7 @@ export default function App() {
             inspectedMedia={inspectedMedia}
             onInspect={handleInspect}
             onStartDownload={handleStartDownload}
+            onStartPlaylistDownload={handleStartPlaylistDownload}
             recentLibrary={libraryItems}
             engineMode={engineSettings.mode}
             onEngineModeChange={handleEngineModeChange}

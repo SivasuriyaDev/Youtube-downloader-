@@ -5,6 +5,7 @@ export interface ParsedMediaUrl {
   platform: MediaPlatform | null;
   id: string | null;
   canonicalUrl: string | null;
+  playlistUrl?: string | null;
   contentType: MediaContentType | null;
   error?: string;
 }
@@ -22,6 +23,11 @@ const INSTAGRAM_HOSTS = new Set([
   'www.instagram.com',
   'm.instagram.com',
   'instagr.am',
+]);
+
+const SPOTIFY_HOSTS = new Set([
+  'open.spotify.com',
+  'play.spotify.com',
 ]);
 
 const PRIVATE_OR_LOCAL_HOST_PATTERNS = [
@@ -50,7 +56,7 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
       id: null,
       canonicalUrl: null,
       contentType: null,
-      error: 'Paste a YouTube or Instagram link to continue.',
+      error: 'Paste a YouTube, Instagram, or Spotify link to continue.',
     };
   }
 
@@ -69,7 +75,7 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
       id: null,
       canonicalUrl: null,
       contentType: null,
-      error: 'Please enter a valid web link (for example, https://youtu.be/... or https://instagram.com/reel/...).',
+      error: 'Please enter a valid web link (for example, YouTube, Instagram Reel, or Spotify Playlist).',
     };
   }
 
@@ -97,11 +103,25 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
   }
 
   if (YOUTUBE_HOSTS.has(hostname)) {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const listParam = parsed.searchParams.get('list');
+    const isPlaylistRoute = parts[0] === 'playlist';
+
+    if (isPlaylistRoute && listParam && /^[a-zA-Z0-9_-]{2,80}$/.test(listParam)) {
+      return {
+        valid: true,
+        platform: 'youtube',
+        id: listParam,
+        canonicalUrl: `https://www.youtube.com/playlist?list=${listParam}`,
+        contentType: 'playlist',
+      };
+    }
+
     let videoId: string | null = null;
     let contentType: MediaContentType = 'video';
 
     if (hostname === 'youtu.be') {
-      const seg = parsed.pathname.split('/').filter(Boolean)[0];
+      const seg = parts[0];
       if (seg && /^[a-zA-Z0-9_-]{11}$/.test(seg)) {
         videoId = seg;
       }
@@ -109,27 +129,38 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
       const vParam = parsed.searchParams.get('v');
       if (vParam && /^[a-zA-Z0-9_-]{11}$/.test(vParam)) {
         videoId = vParam;
-      } else {
-        const parts = parsed.pathname.split('/').filter(Boolean);
-        if (parts.length >= 2 && (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live' || parts[0] === 'v')) {
-          if (/^[a-zA-Z0-9_-]{11}$/.test(parts[1])) {
-            videoId = parts[1];
-            contentType = parts[0] === 'shorts' ? 'short' : 'video';
-          }
+      } else if (parts.length >= 2 && (parts[0] === 'shorts' || parts[0] === 'embed' || parts[0] === 'live' || parts[0] === 'v')) {
+        if (/^[a-zA-Z0-9_-]{11}$/.test(parts[1])) {
+          videoId = parts[1];
+          contentType = parts[0] === 'shorts' ? 'short' : 'video';
         }
       }
     }
 
     if (!videoId) {
+      if (listParam && /^[a-zA-Z0-9_-]{2,80}$/.test(listParam)) {
+        return {
+          valid: true,
+          platform: 'youtube',
+          id: listParam,
+          canonicalUrl: `https://www.youtube.com/playlist?list=${listParam}`,
+          contentType: 'playlist',
+        };
+      }
       return {
         valid: false,
         platform: 'youtube',
         id: null,
         canonicalUrl: null,
         contentType: null,
-        error: 'Could not find a YouTube video ID in that link. Try a watch, Shorts, or youtu.be link.',
+        error: 'Could not find a YouTube video or playlist ID in that link.',
       };
     }
+
+    const playlistUrl =
+      listParam && /^[a-zA-Z0-9_-]{10,80}$/.test(listParam)
+        ? `https://www.youtube.com/playlist?list=${listParam}`
+        : null;
 
     return {
       valid: true,
@@ -138,6 +169,7 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
       canonicalUrl: contentType === 'short'
         ? `https://www.youtube.com/shorts/${videoId}`
         : `https://www.youtube.com/watch?v=${videoId}`,
+      playlistUrl,
       contentType,
     };
   }
@@ -181,13 +213,43 @@ export function parseMediaUrl(rawInput: string): ParsedMediaUrl {
     };
   }
 
+  if (SPOTIFY_HOSTS.has(hostname)) {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const cleanedParts = parts[0]?.startsWith('intl-') ? parts.slice(1) : parts;
+    const kind = cleanedParts[0];
+    const spotifyId = cleanedParts[1];
+
+    if (
+      (kind === 'playlist' || kind === 'album' || kind === 'track') &&
+      spotifyId &&
+      /^[a-zA-Z0-9]{10,40}$/.test(spotifyId)
+    ) {
+      return {
+        valid: true,
+        platform: 'spotify',
+        id: spotifyId,
+        canonicalUrl: `https://open.spotify.com/${kind}/${spotifyId}`,
+        contentType: kind,
+      };
+    }
+
+    return {
+      valid: false,
+      platform: 'spotify',
+      id: null,
+      canonicalUrl: null,
+      contentType: null,
+      error: 'Unsupported Spotify link. Paste a Spotify playlist, album, or track URL.',
+    };
+  }
+
   return {
     valid: false,
     platform: null,
     id: null,
     canonicalUrl: null,
     contentType: null,
-    error: 'Unsupported link. VeloSave supports YouTube videos, Shorts, and Instagram Reels or Posts.',
+    error: 'Unsupported link. VeloSave supports YouTube videos/playlists, Instagram Reels, and Spotify playlists/tracks.',
   };
 }
 

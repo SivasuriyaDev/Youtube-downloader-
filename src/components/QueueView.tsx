@@ -108,7 +108,13 @@ export const QueueView: React.FC<QueueViewProps> = ({
                       {task.title}
                     </p>
                     <p className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400">
-                      <span>{task.platform === 'youtube' ? 'YouTube' : 'Instagram'}</span>
+                      <span>
+                        {task.platform === 'spotify'
+                          ? 'Spotify'
+                          : task.platform === 'youtube'
+                          ? 'YouTube'
+                          : 'Instagram'}
+                      </span>
                       <span aria-hidden="true">·</span>
                       <span>
                         {task.format.quality} {task.format.container.toUpperCase()}

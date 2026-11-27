@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Film } from 'lucide-react';
+import { Film, Music } from 'lucide-react';
 import type { MediaPlatform } from '../types/media';
 
 interface MediaThumbnailProps {
@@ -33,9 +33,17 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = ({
         />
       ) : (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-slate-200 to-slate-300 p-4 text-slate-600 dark:from-slate-800 dark:to-slate-900 dark:text-slate-300">
-          <Film className="h-7 w-7 opacity-70" aria-hidden="true" />
+          {platform === 'spotify' ? (
+            <Music className="h-7 w-7 opacity-70" aria-hidden="true" />
+          ) : (
+            <Film className="h-7 w-7 opacity-70" aria-hidden="true" />
+          )}
           <span className="text-xs font-medium">
-            {platform === 'youtube' ? 'YouTube Media' : 'Instagram Media'}
+            {platform === 'spotify'
+              ? 'Spotify Audio'
+              : platform === 'youtube'
+              ? 'YouTube Media'
+              : 'Instagram Media'}
           </span>
         </div>
       )}

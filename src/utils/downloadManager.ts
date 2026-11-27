@@ -23,7 +23,7 @@ export function saveLibraryItems(items: LibraryItem[]): void {
 }
 
 export function buildDownloadEndpoint(
-  media: Pick<InspectedMedia, 'canonicalUrl' | 'title'>,
+  media: Pick<InspectedMedia, 'canonicalUrl' | 'title'> & { searchQuery?: string },
   format: MediaFormat,
   apiBaseUrl = ''
 ): { endpoint: string; filename: string } {
@@ -46,6 +46,7 @@ export function buildDownloadEndpoint(
     const params = new URLSearchParams({
       sampleKey: format.sampleKey,
       kind: format.kind === 'audio' ? 'audio' : 'video',
+      ext: format.container,
       filename,
     });
     return { endpoint: `/api/sample-asset?${params.toString()}`, filename };
@@ -60,12 +61,17 @@ export function buildDownloadEndpoint(
     return { endpoint: `${base}/api/download?${params.toString()}`, filename };
   }
 
+  const effectiveQuery = media.searchQuery || format.searchQuery;
   const params = new URLSearchParams({
-    url: media.canonicalUrl,
     itag: String(format.itag || 'bestvideo+bestaudio/best'),
     ext: format.container,
     filename,
   });
+  if (effectiveQuery) {
+    params.set('query', effectiveQuery);
+  } else {
+    params.set('url', media.canonicalUrl);
+  }
   return { endpoint: `${base}/api/download?${params.toString()}`, filename };
 }
 

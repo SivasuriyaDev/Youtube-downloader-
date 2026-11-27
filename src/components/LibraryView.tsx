@@ -65,7 +65,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             Saved Library
           </h1>
           <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-            Offline history of your downloaded YouTube and Instagram media.
+            Offline history of your downloaded YouTube, Instagram, and Spotify media.
           </p>
         </div>
 
@@ -112,10 +112,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
             role="tablist"
             aria-label="Filter library by platform"
           >
-            {(['all', 'youtube', 'instagram'] as const).map((plat) => {
+            {(['all', 'youtube', 'instagram', 'spotify'] as const).map((plat) => {
               const active = platformFilter === plat;
               const label =
-                plat === 'all' ? 'All' : plat === 'youtube' ? 'YouTube' : 'Instagram';
+                plat === 'all'
+                  ? 'All'
+                  : plat === 'youtube'
+                  ? 'YouTube'
+                  : plat === 'instagram'
+                  ? 'Instagram'
+                  : 'Spotify';
               return (
                 <button
                   key={plat}
@@ -123,7 +129,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                   role="tab"
                   aria-selected={active}
                   onClick={() => setPlatformFilter(plat)}
-                  className={`min-h-[38px] rounded-lg px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  className={`min-h-[38px] rounded-lg px-3.5 text-xs font-medium transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-600 ${
                     active
                       ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-900 dark:text-slate-100'
                       : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
@@ -199,7 +205,13 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
                     {item.title}
                   </p>
                   <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400">
-                    <span>{item.platform === 'youtube' ? 'YouTube' : 'Instagram'}</span>
+                    <span>
+                      {item.platform === 'spotify'
+                        ? 'Spotify'
+                        : item.platform === 'youtube'
+                        ? 'YouTube'
+                        : 'Instagram'}
+                    </span>
                     <span aria-hidden="true">·</span>
                     <span>{item.author}</span>
                     <span aria-hidden="true">·</span>

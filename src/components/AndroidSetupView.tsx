@@ -83,7 +83,7 @@ export const AndroidSetupView: React.FC<AndroidSetupViewProps> = ({
           Android Execution Engine &amp; App Setup
         </h1>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-          Run extraction directly on your Android phone&apos;s IP via Termux so every YouTube &amp; Instagram video downloads without datacenter blocks.
+          Run extraction directly on your Android phone&apos;s IP via Termux so YouTube videos, playlists, Instagram Reels, and Spotify playlist tracks download without datacenter blocks.
         </p>
       </div>
 
